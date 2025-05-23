@@ -74,9 +74,9 @@ first message). The left screen shows:
     network): - base - previous node in network - next node in network
 
 |                            |                 |                         |
-| -------------------------- | --------------- | ----------------------: | --- |
+| -------------------------- | --------------- | ----------------------: |
 | current communication mode |                 |           neighbor info |
-| **Node ID**                |                 |                         |     |
+| **Node ID**                |                 |                         |
 | battery voltage            | charging status | time since last message |
 
 #### How to start using deploy mode?
