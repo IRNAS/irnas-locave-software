@@ -43,3 +43,10 @@ share/python-wheels/
 
 #envrc
 .envrc
+
+# mac stuff
+.DS_Store
+
+# project specific
+logs
+.sequence
