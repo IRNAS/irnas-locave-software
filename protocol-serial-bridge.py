@@ -1,5 +1,6 @@
 import argparse
 import re
+import signal
 import threading
 import time
 
@@ -674,7 +675,15 @@ def start_cli(bridge: ProtocolSerialBridge):
         print("\nCLI thread interrupted.")
 
 
+def handle_sigterm(sig, frame):
+    """SIGTERM handler."""
+    print("Received SIGTERM, exiting...")
+    if bridge is ProtocolSerialBridge:
+        bridge.close()
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, handle_sigterm)
     # Set up command line argument parsing
     parser = argparse.ArgumentParser(description="Linear Protocol Serial Bridge")
     parser.add_argument("--port", help="Serial port to send data (e.g., /dev/ttyUSB0)")
