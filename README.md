@@ -29,6 +29,32 @@ following modes:
   vice-versa)
 - RF_ONLY no optical links active, RF active (send/receive via RF only)
 
+## Setting up for development
+
+```bash
+git clone https://github.com/IRNAS/irnas-locave-software
+```
+
+Create python venv and install dependencies:
+
+```bash
+python -m venv env
+source env/bin/activate
+pip install -r requirements.txt
+```
+
+Build web interface:
+
+```bash
+npm build --prefix flash-ui
+```
+
+Run protocol-serial-bridge (adjust port as needed):
+
+```bash
+python protocol-serial-bridge.py --port /dev/tty.usbserial-0001
+```
+
 ## LoCave user manual
 
 ### Getting started
