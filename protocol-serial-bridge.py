@@ -145,28 +145,52 @@ class ProtocolSerialBridge:
 
     def _receive_loop(self):
         while self.running:
-            while self.ser_send.in_waiting:
-                while (message := self.driver.get(block=False)) is None:
-                    data = self.ser_send.read(1)
-                    # print("data: ", data)
-                    self.driver.receive(data)
-                if message == b"":
-                    pass
-                elif len(message) < self.HEADER_SIZE:
-                    pass
-                else:
-                    # split message into header and payload
-                    # print("message: ", message)
-                    header = message[: self.HEADER_SIZE]
-                    payload = message[self.HEADER_SIZE :]
-                    l2_crc, l2_sender, source, dest, ttl, seq, msg_type, length = header
-                    if self.crc8(message[1:]) != l2_crc:
-                        print("CRC error")
-                        continue
-                    self._process_message(
-                        l2_sender, l2_crc, source, dest, ttl, seq, msg_type, payload
-                    )
+            try:
+                if not self.ser_send or not self.ser_send.is_open:
+                    self._reconnect_serial()
+                    time.sleep(1)
+                    continue
+                while self.ser_send.in_waiting:
+                    while (message := self.driver.get(block=False)) is None:
+                        data = self.ser_send.read(1)
+                        # print("data: ", data)
+                        self.driver.receive(data)
+                    if message == b"":
+                        pass
+                    elif len(message) < self.HEADER_SIZE:
+                        pass
+                    else:
+                        # split message into header and payload
+                        # print("message: ", message)
+                        header = message[: self.HEADER_SIZE]
+                        payload = message[self.HEADER_SIZE :]
+                        l2_crc, l2_sender, source, dest, ttl, seq, msg_type, length = (
+                            header
+                        )
+                        if self.crc8(message[1:]) != l2_crc:
+                            print("CRC error")
+                            continue
+                        self._process_message(
+                            l2_sender, l2_crc, source, dest, ttl, seq, msg_type, payload
+                        )
+            except (serial.SerialException, OSError) as e:
+                print(f"[Serial Error] Lost connection: {e}")
+                self.ser_send.close()
+                time.sleep(1)
+            except Exception as e:
+                print(f"[Receive Loop Error] {e}")
             time.sleep(0.01)
+
+    def _reconnect_serial(self):
+        while self.running:
+            try:
+                print(f"Attempting to reconnect to {self.send_port}...")
+                self.ser_send = serial.Serial(self.send_port, self.baud_rate, timeout=1)
+                print("Serial reconnected successfully.")
+                return
+            except (serial.SerialException, OSError) as e:
+                print(f"Reconnect failed: {e}")
+                time.sleep(2)  # wait before retrying
 
     def _process_message(
         self,
@@ -283,7 +307,15 @@ class ProtocolSerialBridge:
         message[0] = self.crc8(message[1:])
 
         packet = self.driver.send(message)
-        self.ser_send.write(packet)
+        try:
+            if self.ser_send and self.ser_send.is_open:
+                self.ser_send.write(packet)
+        except (serial.SerialException, OSError) as e:
+            print(f"[Serial Write Error] {e}")
+            try:
+                self.ser_send.close()
+            except Exception as e:
+                print("Serial send error!")
 
         # Store sent messages (only for DATA_TYPE)
         if msg_type == self.DATA_TYPE:
@@ -327,11 +359,14 @@ class ProtocolSerialBridge:
         waited = 0
 
         while self.running:
-            r = requests.get(
-                "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
-            )
-            data = r.json()
-            self.broadcast(str(data["current"]))
+            try:
+                r = requests.get(
+                    "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
+                )
+                data = r.json()
+                self.broadcast(str(data["current"]))
+            except Exception as e:
+                print("weather data error:", e)
 
             waited = 0
             while self.running and waited < interval:
@@ -627,6 +662,8 @@ def start_cli(bridge: ProtocolSerialBridge):
                     bridge.broadcast("test " + str(i))
                     time.sleep(1)
             elif cmd[0] == "exit":
+                if bridge.running:
+                    bridge.close()
                 break
             else:
                 print("Invalid command. Available commands:")
@@ -671,14 +708,23 @@ if __name__ == "__main__":
 
     try:
         while True:
+            if not bridge.running:
+                break
             try:
                 bridge.bot.init()
-                bridge.bot.run()
+
+                if bridge.bot.application is not None:
+                    try:
+                        bridge.bot.run()
+                    except Exception as e:
+                        print("Bot run error:", e)
             except InvalidToken:
                 print("invalid token!")
+            except Exception as e:
+                print("Unknown error:", e)
 
             time.sleep(5)
     except KeyboardInterrupt:
+        if bridge.running:
+            bridge.close()
         print("\nShutting down...")
-    # Ensure bridge is closed properly on exit
-    bridge.close()

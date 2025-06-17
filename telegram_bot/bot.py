@@ -152,7 +152,12 @@ class LoCaveTelegramBot:
     # run the bot
     def run(self):
         """Run the bot. Blocks forever and must be called in the main thread of the application."""
-        self.application.run_polling()
+        try:
+            asyncio.get_event_loop().run_until_complete(self.application.initialize())
+            self.application.run_polling(close_loop=False)
+        except Exception as e:
+            self.logger.exception("Telegram bot run failed")
+            print("bot run error:", e)
 
     def rx_empty(self) -> bool:
         """Checks if RX queue is empty."""
