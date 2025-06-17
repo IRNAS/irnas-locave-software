@@ -1,0 +1,16 @@
+[Unit]
+Description=Run Python script and open browser on boot
+After=network.target
+
+[Service]
+Environment="PATH=/home/base/irnas-locave-software/env/bin"
+ExecStart=/home/base/irnas-locave-software/env/bin/python /home/base/irnas-locave-software/protocol-serial-bridge.py --service --port /dev/ttyUSB0 --baud 115200
+Restart=always
+RestartSec=5
+User=base
+WorkingDirectory=/home/base/irnas-locave-software
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
