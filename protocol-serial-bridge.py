@@ -14,6 +14,8 @@ from telegram_bot.bot import LoCaveTelegramBot
 
 printable = re.compile(r"[^\x20-\x7E]")
 
+shutdown_event = threading.Event()
+
 
 class ProtocolSerialBridge:
     """A serial communication bridge for LoCave communication system.
@@ -145,11 +147,11 @@ class ProtocolSerialBridge:
             f.write(str(self.sequence_number))
 
     def _receive_loop(self):
-        while self.running:
+        while self.running and not shutdown_event.is_set():
             try:
                 if not self.ser_send or not self.ser_send.is_open:
                     self._reconnect_serial()
-                    time.sleep(1)
+                    shutdown_event.wait(1)
                     continue
                 while self.ser_send.in_waiting:
                     while (message := self.driver.get(block=False)) is None:
@@ -177,10 +179,10 @@ class ProtocolSerialBridge:
             except (serial.SerialException, OSError) as e:
                 print(f"[Serial Error] Lost connection: {e}")
                 self.ser_send.close()
-                time.sleep(1)
+                shutdown_event.wait(1)
             except Exception as e:
                 print(f"[Receive Loop Error] {e}")
-            time.sleep(0.01)
+            shutdown_event.wait(0.01)
 
     def _reconnect_serial(self):
         while self.running:
@@ -191,7 +193,7 @@ class ProtocolSerialBridge:
                 return
             except (serial.SerialException, OSError) as e:
                 print(f"Reconnect failed: {e}")
-                time.sleep(2)  # wait before retrying
+                shutdown_event.wait(2)  # wait before retrying
 
     def _process_message(
         self,
@@ -359,7 +361,7 @@ class ProtocolSerialBridge:
         check_interval = 1  # check every 1 second
         waited = 0
 
-        while self.running:
+        while self.running and not shutdown_event.is_set():
             try:
                 r = requests.get(
                     "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
@@ -371,11 +373,11 @@ class ProtocolSerialBridge:
 
             waited = 0
             while self.running and waited < interval:
-                time.sleep(check_interval)
+                shutdown_event.wait(check_interval)
                 waited += check_interval
 
     def _forward_from_telegram(self):
-        while True:
+        while self.running and not shutdown_event.is_set():
             while not self.bot.rx_empty():
                 msg = str(self.bot.pop_rx())
                 self._send_message(
@@ -384,8 +386,8 @@ class ProtocolSerialBridge:
                     msg,
                     source=self.TELEGRAM_ADDRESS,
                 )
-                time.sleep(0.1)
-            time.sleep(1)
+                shutdown_event.wait(0.1)
+            shutdown_event.wait(1)
 
     def _ping_sweep_loop(self):
         while self.running:
@@ -393,14 +395,14 @@ class ProtocolSerialBridge:
                 if not self.running:  # Check if we should stop
                     break
                 self.ping(node)
-                time.sleep(0.01)  # 10ms delay between pings
-            time.sleep(10)  # Wait 10 seconds before next sweep
+                shutdown_event.wait(0.01)  # 10ms delay between pings
+            shutdown_event.wait(10)  # Wait 10 seconds before next sweep
 
     def _broadcast_ping_loop(self):
-        while self.running:
+        while self.running and not shutdown_event.is_set():
             # Send ping to broadcast address (255)
             self.ping(self.BROADCAST_ADDRESS)
-            time.sleep(5)  # Wait 10 seconds before next broadcast ping
+            shutdown_event.wait(5)  # Wait 10 seconds before next broadcast ping
 
     def close(self):
         """Gracefully shutdown the ProtocolSerialBridge."""
@@ -411,6 +413,7 @@ class ProtocolSerialBridge:
             pass
         self.receive_thread.join()
         self.weather_thread.join()
+        self.forward_from_telegram_thread.join()
         if hasattr(self, "ping_sweep_thread"):
             self.ping_sweep_thread.join()
         self.broadcast_ping_thread.join()
@@ -629,7 +632,7 @@ def restart_bot():
         while bridge.bot.application is not None and bridge.bot.application.running:
             if time.time() - start_time > timeout:
                 return jsonify({"error": "bot stop timeout reached!"}), 500
-            time.sleep(0.1)
+            shutdown_event.wait(0.1)
 
     except Exception as e:
         return jsonify({"error": f"could not stop bot: {str(e)}"}), 500
@@ -649,7 +652,7 @@ def start_api_server(host="0.0.0.0", port=8080):
 def start_cli(bridge: ProtocolSerialBridge):
     """Start command line interface for bridge."""
     try:
-        while True:
+        while not shutdown_event.is_set():
             cmd = input("> ").strip().split()
             if not cmd:
                 continue
@@ -661,8 +664,9 @@ def start_cli(bridge: ProtocolSerialBridge):
             elif cmd[0] == "test" and len(cmd) > 1:
                 for i in range(int(cmd[1]), int(cmd[2])):
                     bridge.broadcast("test " + str(i))
-                    time.sleep(1)
+                    shutdown_event.wait(1)
             elif cmd[0] == "exit":
+                shutdown_event.set()
                 if bridge.running:
                     bridge.close()
                 break
@@ -678,12 +682,12 @@ def start_cli(bridge: ProtocolSerialBridge):
 def handle_sigterm(sig, frame):
     """SIGTERM handler."""
     print("Received SIGTERM, exiting...")
-    if bridge is ProtocolSerialBridge:
-        bridge.close()
+    shutdown_event.set()
 
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, handle_sigterm)
+    signal.signal(signal.SIGINT, handle_sigterm)
     # Set up command line argument parsing
     parser = argparse.ArgumentParser(description="Linear Protocol Serial Bridge")
     parser.add_argument("--port", help="Serial port to send data (e.g., /dev/ttyUSB0)")
@@ -716,12 +720,11 @@ if __name__ == "__main__":
         cli_thread.start()
 
     try:
-        while True:
+        while not shutdown_event.is_set():
             if not bridge.running:
                 break
             try:
                 bridge.bot.init()
-
                 if bridge.bot.application is not None:
                     try:
                         bridge.bot.run()
@@ -732,8 +735,8 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Unknown error:", e)
 
-            time.sleep(5)
-    except KeyboardInterrupt:
+            shutdown_event.wait(5)
+    finally:
         if bridge.running:
             bridge.close()
         print("\nShutting down...")
