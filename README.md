@@ -64,9 +64,9 @@ python protocol-serial-bridge.py --port /dev/tty.usbserial-0001
 1. Connect LoCave base to power source with USB-C power adapter and wait for device to turn on
 2. Connect the ethernet cable for internet access (required for Telegram integration, software
    updates and remote technical support)
-3. after a brief delay we should see a full screen web interface on touchscreen and node interface
+3. Turn on the base node by pressing the button **once**.
+4. after a brief delay we should see a full screen web interface on touchscreen and node interface
    on base node LED displays
-4. Turn on the base node by pressing the button **once**.
 5. Turn on 1 non base node and try sending a message (from base to node and from node to base), to
    verify everything is working as expected
 
