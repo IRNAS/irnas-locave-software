@@ -42,6 +42,8 @@ class LoCaveTelegramBot:
         self.application = None
 
         self.info = None
+        self._restart = False
+
         self.setup_logger()
 
     @staticmethod
@@ -101,12 +103,6 @@ class LoCaveTelegramBot:
         if self.token is None:
             raise InvalidToken(message="Token null, please provide a valid token!")
 
-        if not self._is_loop_running():
-            # If no loop is running or it is closed, create a new one
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            self.logger.info("Created a new event loop for the bot.")
-
         self.application = (
             ApplicationBuilder().token(self.token).post_init(self.on_startup).build()
         )
@@ -150,14 +146,25 @@ class LoCaveTelegramBot:
         self.write_config()
 
     # run the bot
-    def run(self):
-        """Run the bot. Blocks forever and must be called in the main thread of the application."""
+    async def start(self):
+        """Initialize the Telegram bot application and start polling for updates.
+
+        This method sets up the bot's internal state, performs post-initialization,
+        and starts polling for incoming updates. It must be run within an active
+        asyncio event loop. The caller is responsible for keeping the loop running
+        to allow the bot to continue receiving updates.
+
+        Raises:
+            Exception: If initialization or polling startup fails.
+        """
         try:
-            asyncio.get_event_loop().run_until_complete(self.application.initialize())
-            self.application.run_polling(close_loop=False)
+            await self.application.initialize()
+            await self.application.post_init(self.application)
+            await self.application.updater.start_polling()
+            await self.application.start()
         except Exception as e:
-            self.logger.exception("Telegram bot run failed")
-            print("bot run error:", e)
+            self.logger.exception("Telegram bot start failed")
+            print("bot start error:", e)
 
     def rx_empty(self) -> bool:
         """Checks if RX queue is empty."""
@@ -174,10 +181,19 @@ class LoCaveTelegramBot:
         self.tx_queue.append(msg)
 
     # graceful shutdown
-    def stop(self):
+    async def stop(self):
         """Gracefully shutdown the bot."""
-        if self.application is not None and self.application.running:
-            self.application.job_queue.run_once(self._async_stop_job, when=0)
+        await self.application.updater.stop()
+        await self.application.stop()
+        await self.application.shutdown()
+
+    def set_restart(self, value=True):
+        """Set restart flag."""
+        self._restart = value
+
+    def get_restart(self):
+        """Get restart flag."""
+        return self._restart
 
     async def _async_stop_job(self, context):
         self.application.stop_running()
@@ -300,6 +316,6 @@ if __name__ == "__main__":
     try:
         bot.init()
         print(bot.password)
-        bot.run()
+        bot.start()
     except InvalidToken:
         print("invalid token")

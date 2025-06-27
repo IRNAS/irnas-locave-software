@@ -8,13 +8,14 @@ import requests
 import serial
 from flask import Flask, jsonify, request, send_from_directory
 from sliplib.slip import Driver
-from telegram.error import InvalidToken
+from telegram.error import InvalidToken, NetworkError
 
 from telegram_bot.bot import LoCaveTelegramBot
 
 printable = re.compile(r"[^\x20-\x7E]")
 
 shutdown_event = threading.Event()
+bot_restart_event = threading.Event()
 
 
 class ProtocolSerialBridge:
@@ -153,12 +154,17 @@ class ProtocolSerialBridge:
                     self._reconnect_serial()
                     shutdown_event.wait(1)
                     continue
-                while self.ser_send.in_waiting:
-                    while (message := self.driver.get(block=False)) is None:
+                while self.ser_send.in_waiting and not shutdown_event.is_set():
+                    while (
+                        message := self.driver.get(block=False)
+                    ) is None and not shutdown_event.is_set():
                         data = self.ser_send.read(1)
                         # print("data: ", data)
                         self.driver.receive(data)
-                    if message == b"":
+                    if shutdown_event.is_set():
+                        break
+
+                    if message == b"" or message is None:
                         pass
                     elif len(message) < self.HEADER_SIZE:
                         pass
@@ -357,9 +363,7 @@ class ProtocolSerialBridge:
         return temp_array
 
     def _send_weather_data(self):
-        interval = 300  # total wait time in seconds
-        check_interval = 1  # check every 1 second
-        waited = 0
+        interval = 300
 
         while self.running and not shutdown_event.is_set():
             try:
@@ -371,10 +375,7 @@ class ProtocolSerialBridge:
             except Exception as e:
                 print("weather data error:", e)
 
-            waited = 0
-            while self.running and waited < interval:
-                shutdown_event.wait(check_interval)
-                waited += check_interval
+            shutdown_event.wait(interval)
 
     def _forward_from_telegram(self):
         while self.running and not shutdown_event.is_set():
@@ -407,16 +408,15 @@ class ProtocolSerialBridge:
     def close(self):
         """Gracefully shutdown the ProtocolSerialBridge."""
         self.running = False
-        try:
-            self.bot.stop()
-        except:  # noqa: E722
-            pass
         self.receive_thread.join()
         self.weather_thread.join()
+
         self.forward_from_telegram_thread.join()
+
         if hasattr(self, "ping_sweep_thread"):
             self.ping_sweep_thread.join()
         self.broadcast_ping_thread.join()
+
         self.ser_send.close()
 
 
@@ -560,7 +560,7 @@ def set_bot_token():
         if hasattr(bridge, "bot") and bridge.bot:
             bridge.bot.set_token(token)
             if bridge.bot.application is not None and bridge.bot.application.running:
-                bridge.bot.stop()
+                bot_restart_event.set()
 
         return jsonify({"status": "Token updated bot should restart soon!"}), 200
 
@@ -625,7 +625,7 @@ def get_bot_info():
 def restart_bot():
     """Restart telegram bot."""
     try:
-        bridge.bot.stop()
+        bot_restart_event.set()
         timeout = 10
         start_time = time.time()
 
@@ -719,24 +719,46 @@ if __name__ == "__main__":
         cli_thread.daemon = True
         cli_thread.start()
 
-    try:
-        while not shutdown_event.is_set():
-            if not bridge.running:
-                break
-            try:
-                bridge.bot.init()
-                if bridge.bot.application is not None:
-                    try:
-                        bridge.bot.run()
-                    except Exception as e:
-                        print("Bot run error:", e)
-            except InvalidToken:
-                print("invalid token!")
-            except Exception as e:
-                print("Unknown error:", e)
+    import asyncio
 
-            shutdown_event.wait(5)
-    finally:
-        if bridge.running:
-            bridge.close()
-        print("\nShutting down...")
+    async def main_loop():  # noqa: D103
+        bot = bridge.bot
+        try:
+            while not shutdown_event.is_set():
+                if not bridge.running:
+                    break
+                try:
+                    bridge.bot.init()
+                    if bridge.bot.application is not None:
+                        try:
+                            bot_restart_event.clear()
+                            await bridge.bot.start()
+                            while (
+                                not shutdown_event.is_set()
+                                and not bot_restart_event.is_set()
+                            ):
+                                await asyncio.sleep(1)
+                        except Exception as e:
+                            print("Bot run error:", e)
+
+                except NetworkError:
+                    print("network error")
+                except InvalidToken:
+                    print("invalid token!")
+                except Exception as e:
+                    print("Unknown error:", e)
+
+                if bot.application is not None:
+                    try:
+                        await bot.stop()
+                    except Exception as stop_error:
+                        print("Bot stop error:", stop_error)
+
+                shutdown_event.wait(5)
+
+        finally:
+            if bridge.running:
+                bridge.close()
+            print("\nShutting down...")
+
+    asyncio.run(main_loop())
