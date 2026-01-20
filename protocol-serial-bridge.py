@@ -387,7 +387,7 @@ class ProtocolSerialBridge:
                     msg,
                     source=self.TELEGRAM_ADDRESS,
                 )
-                shutdown_event.wait(0.1)
+                shutdown_event.wait(0.5)
             shutdown_event.wait(1)
 
     def _ping_sweep_loop(self):
