@@ -43,6 +43,7 @@ class LoCaveTelegramBot:
 
         self.info = None
         self._restart = False
+        self.is_online = False
 
         self.setup_logger()
 
@@ -165,6 +166,7 @@ class LoCaveTelegramBot:
         except Exception as e:
             self.logger.exception("Telegram bot start failed")
             print("bot start error:", e)
+            raise e  # to make bot restart if run fails
 
     def rx_empty(self) -> bool:
         """Checks if RX queue is empty."""
@@ -281,22 +283,24 @@ class LoCaveTelegramBot:
             self.chat_id = None
             self.write_config()
 
+    async def is_telegram_connected(self, context: ContextTypes.DEFAULT_TYPE):
+        """Check if bot is connected to Telegram at the moment."""
+        try:
+            await (
+                context.bot.get_me()
+            )  # use get_me to check if we are connected to telegram
+            return True
+        except (NetworkError, TelegramError):
+            return False
+
     async def _process_tx_queue(self, context: ContextTypes.DEFAULT_TYPE):
         if self.chat_id is None:
             context.job.schedule_removal()
             return
 
-        async def is_telegram_connected():
-            try:
-                await (
-                    context.bot.get_me()
-                )  # use get_me to check if we are connected to telegram
-                return True
-            except (NetworkError, TelegramError):
-                return False
-
         while len(self.tx_queue) > 0:
-            if not await is_telegram_connected():
+            self.is_online = await self.is_telegram_connected(context)
+            if not self.is_online:
                 break
 
             msg = self.tx_queue.popleft()
@@ -307,6 +311,8 @@ class LoCaveTelegramBot:
                 self.write_config()
                 break
             sleep(0.5)
+        else:
+            self.is_online = await self.is_telegram_connected(context)
 
 
 if __name__ == "__main__":

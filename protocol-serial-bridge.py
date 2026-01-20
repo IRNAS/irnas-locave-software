@@ -581,7 +581,11 @@ def get_bot_status():
                 "status": "online" | "offline"
             }
     """
-    if hasattr(bridge, "bot") and bridge.bot.application is not None:
+    if (
+        hasattr(bridge, "bot")
+        and bridge.bot.application is not None
+        and bridge.bot.is_online
+    ):
         return jsonify(
             {"status": str("online" if bridge.bot.application.running else "offline")}
         )
