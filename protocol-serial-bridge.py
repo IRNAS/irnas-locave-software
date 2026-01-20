@@ -368,7 +368,7 @@ class ProtocolSerialBridge:
         while self.running and not shutdown_event.is_set():
             try:
                 r = requests.get(
-                    "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
+                    "https://api.open-meteo.com/v1/forecast?latitude=46.0511&longitude=14.5051&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
                 )
                 data = r.json()
                 self.broadcast(str(data["current"]))
