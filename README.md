@@ -46,13 +46,19 @@ pip install -r requirements.txt
 Build web interface:
 
 ```bash
-npm build --prefix flash-ui
+# first install dependencies
+cd flash-ui
+npm i
+# run build
+npm run build
+# return to root folder
+cd ..
 ```
 
 Run protocol-serial-bridge (adjust port as needed):
 
 ```bash
-python protocol-serial-bridge.py --port /dev/tty.usbserial-0001
+python protocol-serial-bridge.py --port /dev/ttyUSB0
 ```
 
 ## LoCave user manual
